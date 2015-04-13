@@ -158,7 +158,14 @@ void loop(void) {
     {
       // We probably have a Mifare Ultralight card ...
       Serial.println("Seems to be a Mifare Ultralight tag (7 byte UID)");
-	  
+	
+  Serial.println("Write page 4 empty");
+      uint8_t dataEmpty[32] = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0};
+      success = nfc.mifareultralight_WritePage(4, dataEmpty);
+      if(success) {
+       Serial.println("empty page 4"); 
+      }
+      
       // Try to read the first general-purpose user page (#4)
       Serial.println("Reading page 4");
       uint8_t data[32];
