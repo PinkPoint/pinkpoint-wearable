@@ -16,8 +16,9 @@
 Adafruit_PN532 nfc(PN532_IRQ, PN532_RESET);
 
 struct track {
-  uint8_t * routeName;
-  uint8_t * difficulty;
+  uint8_t serialNumber[7];
+  uint8_t routeName[44];
+  uint8_t difficulty[4];
   // TODO: add Date
   struct track * next;
 };
@@ -82,11 +83,10 @@ void loop() {
         
         if(success) {
           // save tracked route  
-          struct track * newTrack = createTrack(routeName, difficulty);
+          struct track * newTrack = createTrack(uid, routeName, difficulty);
           if(newTrack != NULL) {
             addTrackToTracks(newTrack);  
             Serial.println("added track");
-            
             printTracks();
           }
         }
@@ -117,6 +117,9 @@ void addTrackToTracks(struct track * trackToAdd) {
 void printTracks() {
   struct track * currentTrack;
   
+  Serial.println();
+  Serial.println("stored tracks:");
+            
   if(tracks == NULL) {
     Serial.println("no tracks available");
     return;
@@ -132,6 +135,9 @@ void printTracks() {
 }
 
 void printTrack(struct track * trackToPrint) {
+  Serial.print("SerialNumber: ");
+  nfc.PrintHexChar(trackToPrint->serialNumber, 7);
+  
   Serial.print("RouteName: ");
   nfc.PrintHexChar(trackToPrint->routeName, 44);
   
@@ -141,7 +147,7 @@ void printTrack(struct track * trackToPrint) {
   Serial.println("---------------------------");
 }
 
-struct track * createTrack(uint8_t * routeName, uint8_t * difficulty) {
+struct track * createTrack(uint8_t * serialNumber, uint8_t * routeName, uint8_t * difficulty) {
   struct track * ptr;
 
   ptr = (struct track *) malloc(sizeof(struct track));
@@ -150,8 +156,9 @@ struct track * createTrack(uint8_t * routeName, uint8_t * difficulty) {
     return NULL;  
   }
   
-  ptr->routeName = routeName;
-  ptr->difficulty = difficulty;
+  copyArray(serialNumber, ptr->serialNumber, 7);
+  copyArray(routeName, ptr->routeName, 44);
+  copyArray(difficulty, ptr->difficulty, 4);
   ptr->next = NULL;
   return ptr;  
 }
