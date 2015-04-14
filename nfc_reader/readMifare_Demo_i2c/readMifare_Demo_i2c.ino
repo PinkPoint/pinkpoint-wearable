@@ -91,8 +91,9 @@ void loop(void) {
   uint8_t success;
   uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };  // Buffer to store the returned UID
   uint8_t uidLength;                        // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
-  uint8_t * routeName;
-  uint8_t * difficulty;
+  String routeName;
+  String difficulty;
+  String command;
 
   // Wait for an ISO14443A type cards (Mifare, etc.).  When one is found
   // 'uid' will be populated with the UID, and uidLength will indicate
@@ -107,51 +108,76 @@ void loop(void) {
     nfc.PrintHex(uid, uidLength);
     Serial.println("");
 
-    Serial.println("Want do you want to do? C = Clear / R = Read / W = Write");
-
-    int incomingByte = 0;   // for incoming serial data
+    Serial.println("Want do you want to do? C[0..9] = Clear / R[0..9] = Read / W = Write");
+    Serial.println("Please ensure that you enter a newline at the end.");
 
     while (!Serial.available());
-
-    // read the incoming byte:
-    incomingByte = Serial.read();
-
-    // say what you got:
-    //Serial.print("I received: ");
-    //Serial.println(incomingByte, HEX);
+    command = Serial.readString();
 
     //CLEAR
-    if (incomingByte == 0x43) {
-      incomingByte = Serial.parseInt();
-
+    if (command[0] == 'C') {
       Serial.print("you want to clear page ");
-      Serial.println(incomingByte);
+      Serial.println(command[1]);
 
-      ClearPage(incomingByte);
+      // '0' = 48 (DEZ)
+      ClearPage(command[1] - 48);
     }
     // READ
-    else if (incomingByte == 0x52) {
-      incomingByte = Serial.parseInt();
-
+    else if (command[0] == 'R') {
       Serial.print("you want to read page ");
-      Serial.println(incomingByte);
+      Serial.println(command[1]);
 
-      ReadPage(incomingByte);
+      // '0' = 48 (DEZ)
+      ReadPage(command[1] - 48);
     }
     // WRITE
-    else if (incomingByte == 0x57) {
-      Serial.print("you want to write a route. Please enter the route name (max 44 characters): ");
+    else if (command[0] == 'W') {
+      Serial.println("you want to write a route. Please enter the route name (max 44 characters): ");
       while (!Serial.available());
-      Serial.readBytesUntil(10, routeName, 44);
-
+      routeName = Serial.readString();
+      Serial.print("You entered: ");
+      Serial.println(routeName);
+      
       Serial.print("please enter the difficulty (max 4 characters): ");
       while (!Serial.available());
-      Serial.readBytesUntil(10, difficulty, 4);
+      difficulty = Serial.readString();
+      Serial.print("You entered: ");
+      Serial.println(difficulty);
 
-      WritePage(routeName, difficulty);
+      unsigned char routeNameBuffer[44];
+      unsigned char difficultyBuffer[4];
+      ConvertStringToUnsingedChar(routeName, routeNameBuffer, 44);
+      ConvertStringToUnsingedChar(difficulty, difficultyBuffer, 4);
+      
+      WritePage(routeNameBuffer, difficultyBuffer);
     } else {
       Serial.println("nothing...");
     }
+  }
+}
+
+void ConvertStringToUnsingedChar(String data, unsigned char * dataBuffer, int bufferLength) {
+  int a;
+  int arraySize = data.length();
+  
+  if(arraySize > bufferLength) {
+    arraySize = bufferLength;
+    Serial.print("The value contains more than ");
+    Serial.print(bufferLength);
+    Serial.print(" characters. Only ");
+    Serial.print(bufferLength);
+    Serial.println(" character will be taken. The others get truncated.");
+  }
+  
+  for (a = 0; a < arraySize; a++)
+  {
+      dataBuffer[a] = data[a];
+  }
+  
+  // fill the rest with 0
+  for (a = arraySize; a < bufferLength; a++)
+  {
+      dataBuffer[a] = 0;
   }
 }
 
@@ -164,6 +190,7 @@ void WritePage(uint8_t * routeName, uint8_t * difficulty) {
   if (success) {
     if (uidLength == 4) {
       //mifareclassic_WritePage(page, data);
+      Serial.print("Mifare classic not supported");
     }
     else if (uidLength == 7) {
       mifareultralight_WritePage(routeName, difficulty);
@@ -181,7 +208,7 @@ void ClearPage(uint8_t page) {
   if (success) {
     if (uidLength == 4) {
       // mifareclassic_ClearPage(page);
-      Serial.print("Mifare classic not supporteds");
+      Serial.print("Mifare classic not supported");
     }
     else if (uidLength == 7) {
       mifareultralight_ClearPage(page);
@@ -198,7 +225,11 @@ void ReadPage(uint8_t page) {
 
   success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);
   if (success) {
-    if (uidLength == 7) {
+    if (uidLength == 4) {
+      // mifareclassic_ClearPage(page);
+      Serial.print("Mifare classic not supported");
+    }
+    else if (uidLength == 7) {
       mifareultralight_ReadPage(page);
     }
   }
@@ -224,45 +255,50 @@ void mifareultralight_ClearPage(uint8_t page) {
 void mifareultralight_WritePage(uint8_t * routeName, uint8_t * difficulty) {
   uint8_t success;
   int pageCount;
-  int arraySize;
+  int routeNameArraySize = 44;
   int i;
   int pageSize = 4;
   int maxPageCount = 16;
   int difficultyStartPage = 4;
   int routeNameStartPage = 5;
 
-  // write diffculty to page 4
+  ///////// write diffculty to page 4
   success = nfc.mifareultralight_WritePage(difficultyStartPage, difficulty);
   if (success) {
     Serial.print("wrote difficulty ");
     Serial.print(": ");
     nfc.PrintHexChar(difficulty, pageSize);
   }
-  // write route name to page 5-15
-  arraySize = sizeof(routeName) / sizeof(routeName[0]);
-
-  if (arraySize > 44) {
-    Serial.println("The route name contains more than 44 characters. Only 44 character will be written to the NFC tag.");
-  }
-
-  pageCount = (arraySize / pageSize);
-  if (arraySize % pageSize > 0) {
+  
+  ///////// write route name to page 5-15
+  pageCount = (routeNameArraySize / pageSize);
+  if (routeNameArraySize % pageSize > 0) {
     pageCount++;
   }
+  
+  Serial.print(pageCount);
+  Serial.println(" pages will be written for the route name.");
 
   // write all characters of the route to the respecting pages. Break, if max number of pages exceeded
   success = 1;
   for (i = routeNameStartPage; i < (pageCount + routeNameStartPage) && i < maxPageCount; i++) {
     success = success && nfc.mifareultralight_WritePage(i, &routeName[(i - routeNameStartPage) * pageSize]);
+    
+    Serial.print("wrote to page ");
+    Serial.print(i);
+    Serial.print(": ");
+    nfc.PrintHexChar(&routeName[(i - routeNameStartPage) * pageSize], pageSize);
   }
 
+  Serial.println();
+    
   if (success) {
     Serial.print("wrote route name ");
     Serial.print(": ");
-    nfc.PrintHexChar(routeName, arraySize);
+    nfc.PrintHexChar(routeName, routeNameArraySize);
   }  else {
     Serial.print("could not write route name ");
-    nfc.PrintHexChar(routeName, arraySize);
+    nfc.PrintHexChar(routeName, routeNameArraySize);
   }
 }
 

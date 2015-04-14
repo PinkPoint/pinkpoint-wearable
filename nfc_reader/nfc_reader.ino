@@ -17,6 +17,11 @@ Adafruit_PN532 nfc(PN532_IRQ, PN532_RESET);
 
 uint8_t keya[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
+uint8_t success;
+uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };  // Buffer to store the returned UID
+uint8_t oldUid[] = { 0, 0, 0, 0, 0, 0, 0 };  // Buffer to store the returned UID
+uint8_t uidLength = 7;                        // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
+
 void setup() {
   Serial.begin(115200);
   Serial.println("Hello!");
@@ -41,61 +46,77 @@ void setup() {
 }
 
 void loop() {
-  uint8_t success;
-  uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };  // Buffer to store the returned UID
-  uint8_t uidLength;                        // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
-    
+  success = 0;
+  uidLength = 7;
+  
+  copyUids(uid, oldUid, uidLength);
+  
   // Wait for an ISO14443A type cards (Mifare, etc.).  When one is found
   // 'uid' will be populated with the UID, and uidLength will indicate
   // if the uid is 4 bytes (Mifare Classic) or 7 bytes (Mifare Ultralight)
-  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);
+  // 100 = wait 100ms and then success = 0, 0 would mean no timeout and wait forever
+  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 100);
   if (success) {
-    if (uidLength == 4) {
-      Serial.println("Detected Mifare Classic card");
-      int i = 4;
-      for(i = 4; i < 64; i++) {
-        ReadMifareClassicBlock(i, uid, uidLength);
+    // only track route once!
+    if(!areEqualUids(uid, oldUid, uidLength)) {
+      if (uidLength == 4) {
+        Serial.println("Mifare Classic card is not supported!");
+      }
+      else if(uidLength == 7) {
+        Serial.println("Detected Mifare Ultralight tag");
+        int i = 4;
+        // read until tag was removed or page can not be read
+        for(i = 4; true; i++) {
+          success = ReadMifareUltralightPage(i);
+          if(!success) {
+            break;  
+          }
+        }
       }
     }
-    else if(uidLength == 7) {
-      Serial.println("Detected Mifare Ultralight tag");
-      int i = 4;
-      for(i = 4; i < 50; i++) {
-        ReadMifareUltralightPage(i);
-      }
-    }
-  }
-}
-
-void ReadMifareClassicBlock(uint8_t block, uint8_t * uid, uint8_t uidLength) {
-  uint8_t success;  
-  uint8_t data[16];
-  
-  success = nfc.mifareclassic_AuthenticateBlock(uid, uidLength, block - (block % 4), 0, keya);
-  if(success) {
-    success = nfc.mifareclassic_ReadDataBlock(block, data);
-    if(success) {
-      Serial.print("Reading Block "); Serial.print(block); Serial.print(": ");
-      nfc.PrintHexChar(data, 16);
-      delay(100);
-    } else {
-      Serial.print("Could not read block "); Serial.println(block);
-    }  
   } else {
-    Serial.println("Could not authenticate Mifare Classic blocks. Please try another key.");  
+    // no nfc tag detected... reset the uids and wait of one
+    clearUid(uid, uidLength);
+    clearUid(oldUid, uidLength);
   }
 }
 
-void ReadMifareUltralightPage(uint8_t page) {
+void clearUid(uint8_t * uid, int uidLength) {
+  uint8_t emptyUid[] = { 0, 0, 0, 0, 0, 0, 0 };
+  copyUids(emptyUid, uid, uidLength);
+}
+
+void copyUids(uint8_t * src, uint8_t * dest, int uidLength) {
+  int i;
+  
+  for(i = 0; i < uidLength; i++) {
+    dest[i] = src[i];  
+  }
+}
+
+int areEqualUids(uint8_t * uid1, uint8_t * uid2, int uidLength) {
+    int i;
+    
+    for(i = 0; i < uidLength; i++) {
+      if(uid1[i] != uid2[i]) {
+        return 0;  
+      }
+    }
+    
+    return 1;
+}
+
+int ReadMifareUltralightPage(uint8_t page) {
   uint8_t success;  
   uint8_t data[32];
   success = nfc.mifareultralight_ReadPage(page, data);
-  if (success)
-  {  
+  if (success) {  
     Serial.print("Reading Page "); Serial.print(page); Serial.print(": ");
     nfc.PrintHexChar(data, 4);
     delay(100);
+    return 1;
   } else {
     Serial.print("Could not read page "); Serial.println(page);
+    return 0;
   }  
 }
