@@ -15,12 +15,21 @@
 
 Adafruit_PN532 nfc(PN532_IRQ, PN532_RESET);
 
+struct track {
+  uint8_t * routeName;
+  uint8_t * difficulty;
+  // TODO: add Date
+  struct track * next;
+};
+
 uint8_t keya[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
 uint8_t success;
 uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };  // Buffer to store the returned UID
 uint8_t oldUid[] = { 0, 0, 0, 0, 0, 0, 0 };  // Buffer to store the returned UID
 uint8_t uidLength = 7;                        // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
+
+struct track * tracks = NULL;
 
 void setup() {
   Serial.begin(115200);
@@ -49,7 +58,10 @@ void loop() {
   success = 0;
   uidLength = 7;
   
-  copyUids(uid, oldUid, uidLength);
+  uint8_t routeName[44];
+  uint8_t difficulty[4];
+  
+  copyArray(uid, oldUid, uidLength);
   
   // Wait for an ISO14443A type cards (Mifare, etc.).  When one is found
   // 'uid' will be populated with the UID, and uidLength will indicate
@@ -64,12 +76,18 @@ void loop() {
       }
       else if(uidLength == 7) {
         Serial.println("Detected Mifare Ultralight tag");
-        int i = 4;
-        // read until tag was removed or page can not be read
-        for(i = 4; true; i++) {
-          success = ReadMifareUltralightPage(i);
-          if(!success) {
-            break;  
+        
+        success = readDifficulty(difficulty);
+        success = success && readRouteName(routeName);
+        
+        if(success) {
+          // save tracked route  
+          struct track * newTrack = createTrack(routeName, difficulty);
+          if(newTrack != NULL) {
+            addTrackToTracks(newTrack);  
+            Serial.println("added track");
+            
+            printTracks();
           }
         }
       }
@@ -81,15 +99,72 @@ void loop() {
   }
 }
 
-void clearUid(uint8_t * uid, int uidLength) {
-  uint8_t emptyUid[] = { 0, 0, 0, 0, 0, 0, 0 };
-  copyUids(emptyUid, uid, uidLength);
+void addTrackToTracks(struct track * trackToAdd) {
+  struct track * currentTrack;
+  
+  if(tracks == NULL) {
+    tracks = trackToAdd;  
+  } else {
+     currentTrack = tracks;
+     while(currentTrack->next != NULL) {
+       currentTrack = currentTrack->next;  
+     }
+     
+     currentTrack->next = trackToAdd;
+  }
 }
 
-void copyUids(uint8_t * src, uint8_t * dest, int uidLength) {
+void printTracks() {
+  struct track * currentTrack;
+  
+  if(tracks == NULL) {
+    Serial.println("no tracks available");
+    return;
+  }
+  
+  currentTrack = tracks;
+  printTrack(currentTrack);
+  
+   while(currentTrack->next != NULL) {
+     currentTrack = currentTrack->next;  
+     printTrack(currentTrack);
+   }
+}
+
+void printTrack(struct track * trackToPrint) {
+  Serial.print("RouteName: ");
+  nfc.PrintHexChar(trackToPrint->routeName, 44);
+  
+  Serial.print("Difficulty: ");
+  nfc.PrintHexChar(trackToPrint->difficulty, 4);
+  
+  Serial.println("---------------------------");
+}
+
+struct track * createTrack(uint8_t * routeName, uint8_t * difficulty) {
+  struct track * ptr;
+
+  ptr = (struct track *) malloc(sizeof(struct track));
+  if(ptr == NULL) {
+    Serial.println("could not allocate memory");
+    return NULL;  
+  }
+  
+  ptr->routeName = routeName;
+  ptr->difficulty = difficulty;
+  ptr->next = NULL;
+  return ptr;  
+}
+
+void clearUid(uint8_t * uid, int uidLength) {
+  uint8_t emptyUid[] = { 0, 0, 0, 0, 0, 0, 0 };
+  copyArray(emptyUid, uid, uidLength);
+}
+
+void copyArray(uint8_t * src, uint8_t * dest, int arrayLength) {
   int i;
   
-  for(i = 0; i < uidLength; i++) {
+  for(i = 0; i < arrayLength; i++) {
     dest[i] = src[i];  
   }
 }
@@ -106,17 +181,39 @@ int areEqualUids(uint8_t * uid1, uint8_t * uid2, int uidLength) {
     return 1;
 }
 
-int ReadMifareUltralightPage(uint8_t page) {
+uint8_t readMifareUltralightPage(uint8_t page, uint8_t * bufferArray) {
   uint8_t success;  
-  uint8_t data[32];
+  int dataLength = 4;
+  uint8_t data[dataLength];
+
   success = nfc.mifareultralight_ReadPage(page, data);
   if (success) {  
+    copyArray(data, bufferArray, dataLength);
+    
     Serial.print("Reading Page "); Serial.print(page); Serial.print(": ");
-    nfc.PrintHexChar(data, 4);
+    nfc.PrintHexChar(bufferArray, dataLength);
     delay(100);
-    return 1;
   } else {
     Serial.print("Could not read page "); Serial.println(page);
-    return 0;
   }  
+  
+  return success;
+}
+
+uint8_t readDifficulty(uint8_t * difficulty) {
+  return readMifareUltralightPage(4, difficulty);
+}
+
+uint8_t readRouteName(uint8_t * routeName) {
+  uint8_t success = 1;  
+  int pageNumber = 5;
+  int pageSize = 4;
+  int indexNumber;
+  
+  for(pageNumber = 5; pageNumber < 16; pageNumber++) {
+    indexNumber = (pageNumber -5) * pageSize;
+    success = success && readMifareUltralightPage(pageNumber, &routeName[indexNumber]);
+  }
+  
+  return success;
 }
